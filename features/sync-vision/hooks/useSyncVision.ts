@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type { Page, Item, ViewMode, QuadrantId, StatusId } from "@/types";
+import type { Page, Item, ViewMode, QuadrantId, StatusId, LogEntry } from "@/types";
+import type { AnalyzedTopic } from "@/lib/ai/gemini";
 
 // Initial mock data
 const INITIAL_PAGES: Page[] = [
@@ -35,7 +36,7 @@ const INITIAL_PAGES: Page[] = [
   },
 ];
 
-const INITIAL_LOGS = [
+const INITIAL_LOGS: LogEntry[] = [
   { id: "l1", timestamp: "10:00", speaker: "Alice", content: "Let's start with the project overview", pageId: "p1" },
   { id: "l2", timestamp: "10:05", speaker: "Bob", content: "I think we need to prioritize the API design", pageId: "p2" },
   { id: "l3", timestamp: "10:10", speaker: "Alice", content: "Good point, let's add it to Q1", pageId: "p2" },
@@ -43,12 +44,19 @@ const INITIAL_LOGS = [
   { id: "l5", timestamp: "10:20", speaker: "Bob", content: "Let's move to next steps", pageId: "p3" },
 ];
 
+// Recommended view modes per topic (from analysis)
+export type TopicViewMode = {
+  topicId: string;
+  viewMode: ViewMode;
+};
+
 export function useSyncVision() {
   const [pages, setPages] = useState<Page[]>(INITIAL_PAGES);
   const [activePageId, setActivePageId] = useState("p2");
   const [viewMode, setViewMode] = useState<ViewMode>("matrix");
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
-  const [logs] = useState(INITIAL_LOGS);
+  const [logs, setLogs] = useState<LogEntry[]>(INITIAL_LOGS);
+  const [topicViewModes, setTopicViewModes] = useState<TopicViewMode[]>([]);
 
   const activePage = pages.find((p) => p.id === activePageId)!;
   const activeItems = activePage?.items || [];
@@ -189,13 +197,81 @@ export function useSyncVision() {
     );
   }, []);
 
+  // Apply analysis results from Gemini
+  const applyAnalysisResults = useCallback((topics: AnalyzedTopic[]) => {
+    // Convert analyzed topics to pages
+    const newPages: Page[] = topics.map((topic, index) => ({
+      id: topic.id,
+      title: topic.title,
+      status: index === 0 ? "doing" : "pending",
+      items: topic.items.map((item, itemIndex) => ({
+        id: `${topic.id}_${itemIndex}`,
+        content: item.content,
+        quadrant: item.quadrant,
+        status: item.status,
+      })),
+    }));
+
+    // Convert related logs to LogEntry format
+    const newLogs: LogEntry[] = topics.flatMap((topic) =>
+      topic.relatedLogs.map((log, logIndex) => ({
+        id: `${topic.id}_log_${logIndex}`,
+        timestamp: log.timestamp,
+        speaker: log.speaker,
+        content: log.content,
+        pageId: topic.id,
+      }))
+    );
+
+    // Set recommended view modes per topic
+    const newViewModes: TopicViewMode[] = topics.map((topic) => ({
+      topicId: topic.id,
+      viewMode: topic.visualizationFrame,
+    }));
+
+    setPages(newPages);
+    setLogs(newLogs);
+    setTopicViewModes(newViewModes);
+
+    // Set active page to first topic and its recommended view
+    if (newPages.length > 0) {
+      setActivePageId(newPages[0].id);
+      const recommendedView = newViewModes.find((v) => v.topicId === newPages[0].id);
+      if (recommendedView) {
+        setViewMode(recommendedView.viewMode);
+      }
+    }
+  }, []);
+
+  // Get recommended view mode for current page
+  const getRecommendedViewMode = useCallback(
+    (pageId: string): ViewMode | null => {
+      const found = topicViewModes.find((v) => v.topicId === pageId);
+      return found?.viewMode || null;
+    },
+    [topicViewModes]
+  );
+
+  // Handle page change with auto view mode switching
+  const handlePageChange = useCallback(
+    (pageId: string) => {
+      setActivePageId(pageId);
+      const recommended = topicViewModes.find((v) => v.topicId === pageId);
+      if (recommended) {
+        setViewMode(recommended.viewMode);
+      }
+    },
+    [topicViewModes]
+  );
+
   return {
     pages,
     activePageId,
     viewMode,
     activeItems,
     logs,
-    setActivePageId,
+    topicViewModes,
+    setActivePageId: handlePageChange,
     setViewMode,
     handleDragStart,
     handleDragOver,
@@ -206,5 +282,7 @@ export function useSyncVision() {
     deleteItem,
     addPage,
     togglePageStatus,
+    applyAnalysisResults,
+    getRecommendedViewMode,
   };
 }

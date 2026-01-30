@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { LayoutGrid, Columns, List, Plus } from "lucide-react";
+import { LayoutGrid, Columns, List, Plus, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ViewMode } from "@/types";
+import type { AnalysisResult } from "@/lib/ai/gemini";
 import { useSyncVision } from "../hooks/useSyncVision";
 import { ProgressBar } from "./ProgressBar";
 import { LeftSidebar } from "./LeftSidebar";
@@ -14,6 +15,8 @@ import { MatrixView } from "./MatrixView";
 import { KanbanView } from "./KanbanView";
 import { ListView } from "./ListView";
 import { Inbox } from "./Inbox";
+import { TranscriptAnalyzer } from "./TranscriptAnalyzer";
+import { AnalysisResultView } from "./AnalysisResultView";
 
 const VIEW_TABS: { id: ViewMode; label: string; icon: React.ReactNode }[] = [
   { id: "matrix", label: "Matrix", icon: <LayoutGrid className="h-4 w-4" /> },
@@ -28,6 +31,7 @@ export function SyncVision() {
     viewMode,
     activeItems,
     logs,
+    topicViewModes,
     setActivePageId,
     setViewMode,
     handleDragStart,
@@ -39,9 +43,12 @@ export function SyncVision() {
     deleteItem,
     addPage,
     togglePageStatus,
+    applyAnalysisResults,
+    getRecommendedViewMode,
   } = useSyncVision();
 
   const [newItemText, setNewItemText] = useState("");
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
 
   const handleAddItem = () => {
     if (newItemText.trim()) {
@@ -49,6 +56,17 @@ export function SyncVision() {
       setNewItemText("");
     }
   };
+
+  const handleAnalysisComplete = (result: AnalysisResult) => {
+    setAnalysisResult(result);
+  };
+
+  const handleApplyAnalysis = (topics: AnalysisResult["topics"]) => {
+    applyAnalysisResults(topics);
+    setAnalysisResult(null);
+  };
+
+  const recommendedView = getRecommendedViewMode(activePageId);
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -78,12 +96,23 @@ export function SyncVision() {
                 variant={viewMode === tab.id ? "default" : "ghost"}
                 size="sm"
                 onClick={() => setViewMode(tab.id)}
-                className="gap-2"
+                className={cn(
+                  "gap-2",
+                  recommendedView === tab.id && viewMode !== tab.id && "ring-2 ring-primary/30"
+                )}
               >
                 {tab.icon}
                 {tab.label}
+                {recommendedView === tab.id && (
+                  <Sparkles className="h-3 w-3 text-amber-500" />
+                )}
               </Button>
             ))}
+
+            <div className="flex-1" />
+
+            {/* AI Analysis Button */}
+            <TranscriptAnalyzer onAnalysisComplete={handleAnalysisComplete} />
           </div>
 
           {/* View Content */}
@@ -147,6 +176,15 @@ export function SyncVision() {
           onTogglePageStatus={togglePageStatus}
         />
       </div>
+
+      {/* Analysis Result Modal */}
+      {analysisResult && (
+        <AnalysisResultView
+          result={analysisResult}
+          onApply={handleApplyAnalysis}
+          onClose={() => setAnalysisResult(null)}
+        />
+      )}
     </div>
   );
 }
