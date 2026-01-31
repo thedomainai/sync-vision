@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import { Sparkles, Loader2, FileText, Upload } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Sparkles, Loader2, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { analyzeTranscriptAction } from "../actions";
 import type { AnalysisResult, AnalyzedTopic } from "@/lib/ai/gemini";
 
 interface TranscriptAnalyzerProps {
   onAnalysisComplete: (result: AnalysisResult) => void;
+  initialTranscript?: string;
+  autoOpen?: boolean;
 }
 
 // Sample transcript for demo
@@ -65,11 +67,23 @@ const SAMPLE_TRANSCRIPT = `# EC事業 定例会議 - 2026/01/30
 
 **10:42 田中**: 以上で本日の会議を終了します。お疲れ様でした。`;
 
-export function TranscriptAnalyzer({ onAnalysisComplete }: TranscriptAnalyzerProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [transcript, setTranscript] = useState("");
+export function TranscriptAnalyzer({ onAnalysisComplete, initialTranscript = "", autoOpen = false }: TranscriptAnalyzerProps) {
+  const [isOpen, setIsOpen] = useState(autoOpen);
+  const [transcript, setTranscript] = useState(initialTranscript);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialTranscript) {
+      setTranscript(initialTranscript);
+    }
+  }, [initialTranscript]);
+
+  useEffect(() => {
+    if (autoOpen) {
+      setIsOpen(true);
+    }
+  }, [autoOpen]);
 
   const handleAnalyze = async () => {
     if (!transcript.trim()) {
@@ -80,8 +94,7 @@ export function TranscriptAnalyzer({ onAnalysisComplete }: TranscriptAnalyzerPro
     setIsAnalyzing(true);
     setError(null);
 
-    const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || "AIzaSyDjXlBMxkwUgTlh625xpa6CZhUNHiu9DJc";
-    const result = await analyzeTranscriptAction(transcript, apiKey);
+    const result = await analyzeTranscriptAction(transcript);
 
     setIsAnalyzing(false);
 

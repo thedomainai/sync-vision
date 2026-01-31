@@ -16,6 +16,7 @@ import { KanbanView } from "./KanbanView";
 import { ListView } from "./ListView";
 import { Inbox } from "./Inbox";
 import { TranscriptAnalyzer } from "./TranscriptAnalyzer";
+import { RealtimeTranscriber } from "./RealtimeTranscriber";
 import { AnalysisResultView } from "./AnalysisResultView";
 
 const VIEW_TABS: { id: ViewMode; label: string; icon: React.ReactNode }[] = [
@@ -49,6 +50,8 @@ export function SyncVision() {
 
   const [newItemText, setNewItemText] = useState("");
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+  const [transcriptionText, setTranscriptionText] = useState("");
+  const [showAnalyzer, setShowAnalyzer] = useState(false);
 
   const handleAddItem = () => {
     if (newItemText.trim()) {
@@ -59,6 +62,13 @@ export function SyncVision() {
 
   const handleAnalysisComplete = (result: AnalysisResult) => {
     setAnalysisResult(result);
+    setShowAnalyzer(false);
+    setTranscriptionText("");
+  };
+
+  const handleSendToAnalysis = (transcript: string) => {
+    setTranscriptionText(transcript);
+    setShowAnalyzer(true);
   };
 
   const handleApplyAnalysis = (topics: AnalysisResult["topics"]) => {
@@ -111,8 +121,13 @@ export function SyncVision() {
 
             <div className="flex-1" />
 
-            {/* AI Analysis Button */}
-            <TranscriptAnalyzer onAnalysisComplete={handleAnalysisComplete} />
+            {/* AI Analysis Buttons */}
+            <RealtimeTranscriber onSendToAnalysis={handleSendToAnalysis} />
+            <TranscriptAnalyzer
+              onAnalysisComplete={handleAnalysisComplete}
+              initialTranscript={transcriptionText}
+              autoOpen={showAnalyzer}
+            />
           </div>
 
           {/* View Content */}
