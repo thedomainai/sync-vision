@@ -6,6 +6,7 @@ import type {
   MatrixFrame,
   LogicTreeFrame,
   WhiteboardFrame,
+  TimelineFrame,
   RealtimeAnalysisResult,
 } from "@/types/frames";
 
@@ -16,15 +17,26 @@ const REALTIME_ANALYSIS_PROMPT = `あなたは会議ファシリテーション�
 
 ## 利用可能なフレーム
 
-### 1. matrix（4象限マトリクス）
-- 用途: 優先順位付け、SWOT分析、比較検討
-- 使うべき場面: 「重要」「緊急」「メリット」「デメリット」「強み」「弱み」などの話題
+### 1. matrix（4象限マトリクス）- 動的軸生成
+- 用途: 比較検討、優先順位付け、分析
+- 使うべき場面: 2軸で整理できる議論
+- **重要**: 軸は議論内容に応じて毎回適切なものを考えてください
+  - 例: 「コスト × 効果」「短期 × 長期」「難易度 × インパクト」「リスク × リターン」
 
-### 2. logic-tree（ロジックツリー / マインドマップ）
+### 2. timeline（タイムライン）
+- 用途: 時系列整理、フェーズ管理、業務フロー可視化
+- 使うべき場面: 時間軸、段階、プロセスに関する話題
+- timelineType:
+  - "period": 時期（Q1, Q2, 今月, 来月, 来年 など）
+  - "phase": フェーズ（企画, 設計, 開発, テスト, リリース など）
+  - "flow": 業務フロー（受注, 製造, 出荷, 納品 など）
+- カテゴリは議論内容に応じて3〜6個程度設定
+
+### 3. logic-tree（ロジックツリー / マインドマップ）
 - 用途: 問題分解、原因分析、階層的整理
 - 使うべき場面: 「なぜ」「原因」「要因」「分類」「構造」などの話題
 
-### 3. whiteboard（ホワイトボード + 付箋）
+### 4. whiteboard（ホワイトボード + 付箋）
 - 用途: ブレインストーミング、アイデア出し、自由な発想
 - 使うべき場面: 「アイデア」「案」「提案」「可能性」などの話題
 
@@ -32,7 +44,7 @@ const REALTIME_ANALYSIS_PROMPT = `あなたは会議ファシリテーション�
 
 フレームタイプに応じて以下の形式で出力してください。
 
-### matrixの場合:
+### matrixの場合（軸は議論内容から動的に生成）:
 {
   "suggestedFrame": "matrix",
   "frameReason": "このフレームを選んだ理由",
@@ -40,14 +52,41 @@ const REALTIME_ANALYSIS_PROMPT = `あなたは会議ファシリテーション�
   "frame": {
     "type": "matrix",
     "title": "フレームのタイトル",
+    "axisLabels": {
+      "xPositive": "X軸の正方向ラベル（例: 高コスト）",
+      "xNegative": "X軸の負方向ラベル（例: 低コスト）",
+      "yPositive": "Y軸の正方向ラベル（例: 高効果）",
+      "yNegative": "Y軸の負方向ラベル（例: 低効果）"
+    },
     "labels": {
-      "q1": "第1象限のラベル（例: 重要＆緊急）",
-      "q2": "第2象限のラベル（例: 重要＆非緊急）",
-      "q3": "第3象限のラベル（例: 非重要＆緊急）",
-      "q4": "第4象限のラベル（例: 非重要＆非緊急）"
+      "q1": "第1象限の説明（例: 高コスト＆高効果）",
+      "q2": "第2象限の説明（例: 低コスト＆高効果）",
+      "q3": "第3象限の説明（例: 高コスト＆低効果）",
+      "q4": "第4象限の説明（例: 低コスト＆低効果）"
     },
     "items": [
       {"id": "m1", "content": "項目内容", "speaker": "発言者", "quadrant": "q1"}
+    ]
+  }
+}
+
+### timelineの場合:
+{
+  "suggestedFrame": "timeline",
+  "frameReason": "このフレームを選んだ理由",
+  "summary": "会話の要約（1-2文）",
+  "frame": {
+    "type": "timeline",
+    "title": "フレームのタイトル",
+    "timelineType": "period|phase|flow",
+    "categories": [
+      {"id": "c1", "label": "Q1", "description": "1月〜3月"},
+      {"id": "c2", "label": "Q2", "description": "4月〜6月"},
+      {"id": "c3", "label": "Q3", "description": "7月〜9月"},
+      {"id": "c4", "label": "Q4", "description": "10月〜12月"}
+    ],
+    "items": [
+      {"id": "t1", "content": "タスク内容", "speaker": "発言者", "categoryId": "c1"}
     ]
   }
 }
@@ -103,6 +142,8 @@ const REALTIME_ANALYSIS_PROMPT = `あなたは会議ファシリテーション�
 ## 注意事項
 - 会話内容がまだ少ない場合は whiteboard で付箋として整理
 - 会話が進むにつれて適切なフレームに変更を提案
+- matrixの軸は必ず議論内容から適切なものを考えて設定すること
+- timelineのカテゴリは議論内容に応じて適切な数と内容を設定すること
 - 発言者名が分かる場合は speaker フィールドに記録
 - idは一意になるよう連番で付与
 
@@ -174,15 +215,34 @@ export function createEmptyFrame(type: FrameType): Frame {
     case "matrix":
       return {
         type: "matrix",
-        title: "優先順位マトリクス",
+        title: "分析マトリクス",
+        axisLabels: {
+          xPositive: "高",
+          xNegative: "低",
+          yPositive: "高",
+          yNegative: "低",
+        },
         labels: {
-          q1: "重要 & 緊急",
-          q2: "重要 & 非緊急",
-          q3: "非重要 & 緊急",
-          q4: "非重要 & 非緊急",
+          q1: "高 × 高",
+          q2: "低 × 高",
+          q3: "高 × 低",
+          q4: "低 × 低",
         },
         items: [],
       } as MatrixFrame;
+
+    case "timeline":
+      return {
+        type: "timeline",
+        title: "タイムライン",
+        timelineType: "phase",
+        categories: [
+          { id: "c1", label: "Phase 1" },
+          { id: "c2", label: "Phase 2" },
+          { id: "c3", label: "Phase 3" },
+        ],
+        items: [],
+      } as TimelineFrame;
 
     case "logic-tree":
       return {
