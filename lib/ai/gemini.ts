@@ -1,6 +1,6 @@
 // Gemini API Client for transcript analysis
 
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
 export interface AnalyzedTopic {
   id: string;
@@ -81,7 +81,7 @@ const ANALYSIS_PROMPT = `あなたは会議ファシリテーションの専門�
 会議録:
 `;
 
-export async function analyzeTranscript(
+async function callGeminiAPI(
   transcript: string,
   apiKey: string
 ): Promise<AnalysisResult> {
@@ -112,7 +112,12 @@ export async function analyzeTranscript(
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Gemini API error: ${error}`);
+    console.error("Gemini API Error Details:", {
+      status: response.status,
+      statusText: response.statusText,
+      error,
+    });
+    throw new Error(`Gemini API error (${response.status}): ${error}`);
   }
 
   const data = await response.json();
@@ -126,5 +131,21 @@ export async function analyzeTranscript(
     return JSON.parse(text) as AnalysisResult;
   } catch {
     throw new Error(`Failed to parse Gemini response: ${text}`);
+  }
+}
+
+export async function analyzeTranscript(
+  transcript: string,
+  apiKey: string,
+  backupApiKey?: string
+): Promise<AnalysisResult> {
+  try {
+    return await callGeminiAPI(transcript, apiKey);
+  } catch (error) {
+    if (backupApiKey) {
+      console.warn("Primary API key failed, trying backup key...", error);
+      return await callGeminiAPI(transcript, backupApiKey);
+    }
+    throw error;
   }
 }
