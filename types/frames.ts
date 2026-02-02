@@ -104,6 +104,18 @@ export interface TimelineFrame {
 export type Frame = MatrixFrame | LogicTreeFrame | WhiteboardFrame | TimelineFrame;
 
 // ============================================
+// Open Questions (残論点)
+// ============================================
+export interface OpenQuestion {
+  id: string;
+  question: string;
+  currentUnderstanding: string;
+  informationNeeded: string;
+  resolved: boolean;
+  speaker?: string;
+}
+
+// ============================================
 // Analysis result from Gemini
 // ============================================
 export interface RealtimeAnalysisResult {
@@ -111,6 +123,7 @@ export interface RealtimeAnalysisResult {
   frameReason: string;
   frame: Frame;
   summary: string;
+  openQuestions: OpenQuestion[];
   lastProcessedText: string;
 }
 

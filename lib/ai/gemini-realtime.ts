@@ -139,6 +139,27 @@ const REALTIME_ANALYSIS_PROMPT = `あなたは会議ファシリテーション�
 - orange: 重要な指摘
 - purple: 未決定事項、要検討
 
+## 残論点（Open Questions）の抽出
+
+全てのフレームタイプで、以下の形式で残論点を出力してください:
+
+"openQuestions": [
+  {
+    "id": "q1",
+    "question": "明らかにすべき論点（質問形式で）",
+    "currentUnderstanding": "現時点でわかっていること",
+    "informationNeeded": "回答が欲しい具体的な内容",
+    "resolved": false,
+    "speaker": "この論点を提起した人（わかれば）"
+  }
+]
+
+### 残論点の抽出ルール
+- 議論の中で「〜はどうする？」「〜について検討が必要」「まだ決まっていない」などの発言を検出
+- 明確な結論が出ていない項目を抽出
+- 具体的なアクションや決定事項につながる質問を優先
+- 残論点がない場合は空配列 [] を返す
+
 ## 注意事項
 - 会話内容がまだ少ない場合は whiteboard で付箋として整理
 - 会話が進むにつれて適切なフレームに変更を提案
@@ -146,6 +167,7 @@ const REALTIME_ANALYSIS_PROMPT = `あなたは会議ファシリテーション�
 - timelineのカテゴリは議論内容に応じて適切な数と内容を設定すること
 - 発言者名が分かる場合は speaker フィールドに記録
 - idは一意になるよう連番で付与
+- **必ずopenQuestionsフィールドを出力に含めること**
 
 会話内容:
 `;
@@ -203,6 +225,10 @@ export async function analyzeConversationRealtime(
   try {
     const result = JSON.parse(text) as RealtimeAnalysisResult;
     result.lastProcessedText = transcript;
+    // Ensure openQuestions is always an array
+    if (!result.openQuestions) {
+      result.openQuestions = [];
+    }
     return result;
   } catch {
     throw new Error(`Failed to parse Gemini response: ${text}`);
