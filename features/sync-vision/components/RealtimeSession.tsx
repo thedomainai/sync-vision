@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { Frame, FrameType, TranscriptSegment } from "@/types/frames";
+import type { Frame, FrameType, TranscriptSegment, OpenQuestion } from "@/types/frames";
 import {
   createDeepgramWebSocket,
   sendAudioToDeepgram,
@@ -26,6 +26,7 @@ import {
   createEmptyFrame,
 } from "@/lib/ai/gemini-realtime";
 import { LogicTree, Whiteboard, MatrixFrame, TimelineFrame } from "./frames";
+import { OpenQuestionsPanel } from "./OpenQuestionsPanel";
 
 type RecordingStatus = "idle" | "recording" | "paused";
 
@@ -57,6 +58,7 @@ export function RealtimeSession({
   const [selectedFrameType, setSelectedFrameType] = useState<FrameType | null>(null);
   const [summary, setSummary] = useState("");
   const [frameReason, setFrameReason] = useState("");
+  const [openQuestions, setOpenQuestions] = useState<OpenQuestion[]>([]);
 
   // Refs
   const socketRef = useRef<WebSocket | null>(null);
@@ -107,6 +109,7 @@ export function RealtimeSession({
 
       setSummary(result.summary);
       setFrameReason(result.frameReason);
+      setOpenQuestions(result.openQuestions || []);
       lastAnalyzedTextRef.current = transcript;
     } catch (err) {
       console.error("Analysis error:", err);
@@ -236,7 +239,16 @@ export function RealtimeSession({
     setSelectedFrameType(null);
     setSummary("");
     setFrameReason("");
+    setOpenQuestions([]);
     lastAnalyzedTextRef.current = "";
+  };
+
+  const handleToggleQuestionResolved = (questionId: string) => {
+    setOpenQuestions((prev) =>
+      prev.map((q) =>
+        q.id === questionId ? { ...q, resolved: !q.resolved } : q
+      )
+    );
   };
 
   const displayFrameType = selectedFrameType || currentFrame.type;
@@ -366,6 +378,12 @@ export function RealtimeSession({
               <strong>AI提案:</strong> {frameReason}
             </div>
           )}
+
+          {/* Open Questions Panel */}
+          <OpenQuestionsPanel
+            questions={openQuestions}
+            onToggleResolved={handleToggleQuestionResolved}
+          />
         </div>
       </div>
     </div>
