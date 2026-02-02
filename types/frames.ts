@@ -1,6 +1,6 @@
 // Frame type definitions for realtime conversation analysis
 
-export type FrameType = "matrix" | "logic-tree" | "whiteboard";
+export type FrameType = "matrix" | "logic-tree" | "whiteboard" | "timeline";
 
 // ============================================
 // 4-Quadrant Matrix (重要度×緊急度 / SWOT)
@@ -73,9 +73,35 @@ export interface WhiteboardFrame {
 }
 
 // ============================================
+// Timeline View (時系列 / フェーズ / フロー)
+// ============================================
+export type TimelineType = "period" | "phase" | "flow";
+
+export interface TimelineCategory {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+export interface TimelineItem {
+  id: string;
+  content: string;
+  speaker?: string;
+  categoryId: string;
+}
+
+export interface TimelineFrame {
+  type: "timeline";
+  title: string;
+  timelineType: TimelineType;
+  categories: TimelineCategory[];
+  items: TimelineItem[];
+}
+
+// ============================================
 // Union type for all frames
 // ============================================
-export type Frame = MatrixFrame | LogicTreeFrame | WhiteboardFrame;
+export type Frame = MatrixFrame | LogicTreeFrame | WhiteboardFrame | TimelineFrame;
 
 // ============================================
 // Analysis result from Gemini

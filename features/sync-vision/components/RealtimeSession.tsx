@@ -10,6 +10,7 @@ import {
   GitBranch,
   StickyNote,
   RefreshCw,
+  Calendar,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -24,7 +25,7 @@ import {
   analyzeConversationRealtime,
   createEmptyFrame,
 } from "@/lib/ai/gemini-realtime";
-import { LogicTree, Whiteboard, MatrixFrame } from "./frames";
+import { LogicTree, Whiteboard, MatrixFrame, TimelineFrame } from "./frames";
 
 type RecordingStatus = "idle" | "recording" | "paused";
 
@@ -34,7 +35,8 @@ interface RealtimeSessionProps {
 }
 
 const FRAME_TABS: { id: FrameType; label: string; icon: React.ReactNode }[] = [
-  { id: "matrix", label: "4象限", icon: <LayoutGrid className="h-4 w-4" /> },
+  { id: "matrix", label: "マトリクス", icon: <LayoutGrid className="h-4 w-4" /> },
+  { id: "timeline", label: "タイムライン", icon: <Calendar className="h-4 w-4" /> },
   { id: "logic-tree", label: "ロジックツリー", icon: <GitBranch className="h-4 w-4" /> },
   { id: "whiteboard", label: "ホワイトボード", icon: <StickyNote className="h-4 w-4" /> },
 ];
@@ -318,6 +320,9 @@ export function RealtimeSession({
         <div className="flex-1 overflow-auto bg-gray-50">
           {displayFrameType === "matrix" && (
             <MatrixFrame frame={currentFrame as any} />
+          )}
+          {displayFrameType === "timeline" && (
+            <TimelineFrame frame={currentFrame as any} />
           )}
           {displayFrameType === "logic-tree" && (
             <LogicTree frame={currentFrame as any} />

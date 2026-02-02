@@ -74,53 +74,65 @@ export function MatrixFrame({ frame, className }: MatrixFrameProps) {
     <div className={cn("p-4", className)}>
       <h3 className="text-lg font-semibold mb-4 text-gray-800">{frame.title}</h3>
 
-      {/* Axis labels */}
-      {frame.axisLabels && (
-        <div className="relative mb-2">
-          <div className="flex justify-between text-xs text-gray-500">
-            <span>{frame.axisLabels.xNegative}</span>
-            <span>{frame.axisLabels.xPositive}</span>
+      <div className="flex">
+        {/* Y-axis labels (left side) */}
+        {frame.axisLabels && (
+          <div className="flex flex-col justify-between items-center pr-2 py-4 text-xs text-gray-600 font-medium">
+            <span className="writing-vertical-rl rotate-180 whitespace-nowrap">
+              {frame.axisLabels.yPositive}
+            </span>
+            <div className="h-full flex items-center">
+              <div className="w-0.5 h-16 bg-gradient-to-b from-gray-400 to-gray-200" />
+            </div>
+            <span className="writing-vertical-rl rotate-180 whitespace-nowrap">
+              {frame.axisLabels.yNegative}
+            </span>
+          </div>
+        )}
+
+        <div className="flex-1">
+          {/* X-axis labels (top) */}
+          {frame.axisLabels && (
+            <div className="flex justify-between px-4 mb-2 text-xs text-gray-600 font-medium">
+              <span>{frame.axisLabels.xNegative}</span>
+              <div className="flex-1 flex items-center justify-center mx-2">
+                <div className="h-0.5 w-16 bg-gradient-to-r from-gray-200 via-gray-400 to-gray-200" />
+              </div>
+              <span>{frame.axisLabels.xPositive}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-0.5 bg-gray-200 rounded-lg overflow-hidden">
+            {/* Top row: Q1 (top-left), Q2 (top-right) */}
+            <Quadrant
+              label={frame.labels.q1}
+              items={q1Items}
+              className="bg-red-50"
+              position="top-left"
+            />
+            <Quadrant
+              label={frame.labels.q2}
+              items={q2Items}
+              className="bg-blue-50"
+              position="top-right"
+            />
+
+            {/* Bottom row: Q3 (bottom-left), Q4 (bottom-right) */}
+            <Quadrant
+              label={frame.labels.q3}
+              items={q3Items}
+              className="bg-yellow-50"
+              position="bottom-left"
+            />
+            <Quadrant
+              label={frame.labels.q4}
+              items={q4Items}
+              className="bg-gray-50"
+              position="bottom-right"
+            />
           </div>
         </div>
-      )}
-
-      <div className="grid grid-cols-2 gap-0.5 bg-gray-200 rounded-lg overflow-hidden">
-        {/* Top row: Q1 (top-left), Q2 (top-right) */}
-        <Quadrant
-          label={frame.labels.q1}
-          items={q1Items}
-          className="bg-red-50"
-          position="top-left"
-        />
-        <Quadrant
-          label={frame.labels.q2}
-          items={q2Items}
-          className="bg-blue-50"
-          position="top-right"
-        />
-
-        {/* Bottom row: Q3 (bottom-left), Q4 (bottom-right) */}
-        <Quadrant
-          label={frame.labels.q3}
-          items={q3Items}
-          className="bg-yellow-50"
-          position="bottom-left"
-        />
-        <Quadrant
-          label={frame.labels.q4}
-          items={q4Items}
-          className="bg-gray-50"
-          position="bottom-right"
-        />
       </div>
-
-      {/* Y-axis labels */}
-      {frame.axisLabels && (
-        <div className="flex flex-col items-start mt-2 text-xs text-gray-500">
-          <span>{frame.axisLabels.yPositive} ↑</span>
-          <span className="mt-auto">{frame.axisLabels.yNegative} ↓</span>
-        </div>
-      )}
     </div>
   );
 }
