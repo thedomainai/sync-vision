@@ -5,42 +5,46 @@ Chrome extension to capture audio from meeting tabs for real-time transcription 
 ## Features
 
 - Capture audio from Google Meet, Zoom Web, and Microsoft Teams
-- Stream audio to SyncVision web app for transcription
+- Stream audio to WebSocket server for transcription via Deepgram
 - Visual recording indicator on meeting pages
 
-## Installation
+## Quick Start
 
-### Development Mode
+### 1. Start the servers
+
+```bash
+# Terminal 1: Start Next.js web app
+npm run dev
+
+# Terminal 2: Start WebSocket server
+npm run dev:ws
+
+# Or run both together
+npm run dev:all
+```
+
+### 2. Install the extension
 
 1. Open Chrome and navigate to `chrome://extensions/`
 2. Enable "Developer mode" (toggle in top-right corner)
 3. Click "Load unpacked"
 4. Select this `extensions/chrome` directory
-5. The extension should appear in your toolbar
+5. The extension should appear in your toolbar (🎙️ icon)
 
-### Generate Icons
+### 3. Configure environment
 
-The extension requires PNG icons. Generate them from the SVG:
+Create `.env.local` in the project root:
 
-```bash
-# Using ImageMagick (install via Homebrew: brew install imagemagick)
-cd extensions/chrome/icons
-convert -background none icon.svg -resize 16x16 icon16.png
-convert -background none icon.svg -resize 32x32 icon32.png
-convert -background none icon.svg -resize 48x48 icon48.png
-convert -background none icon.svg -resize 128x128 icon128.png
+```
+DEEPGRAM_API_KEY=your_deepgram_api_key
 ```
 
-Or use any online SVG to PNG converter.
+### 4. Start capturing
 
-## Usage
-
-1. Start the SyncVision web app (`npm run dev`)
-2. Open a supported meeting site (Google Meet, Zoom, or Teams)
-3. Click the SyncVision extension icon
-4. Enter your server URL (default: `http://localhost:3000`)
-5. Click "Start Capture"
-6. The meeting audio will be transcribed in real-time
+1. Open a meeting (Google Meet, Zoom, or Teams)
+2. Click the SyncVision extension icon 🎙️
+3. Click "Start Capture"
+4. Open SyncVision web app to see transcription
 
 ## Supported Sites
 
@@ -50,37 +54,41 @@ Or use any online SVG to PNG converter.
 | Zoom Web | `*.zoom.us/*` |
 | Microsoft Teams | `teams.microsoft.com/*` |
 
-## Permissions
+## Server URLs
 
-- `tabCapture` - Required to capture tab audio
-- `activeTab` - Access current tab information
-- `storage` - Save user settings
+| Server | Default URL | Purpose |
+|--------|-------------|---------|
+| Web App | http://localhost:3000 | SyncVision UI |
+| WebSocket | http://localhost:3001 | Audio streaming |
 
-## Technical Details
-
-### Architecture
+## Architecture
 
 ```
-Extension                          Web App
-   │                                  │
-   ├── tabCapture API ───────────────>│
-   │   (capture audio)                │
-   │                                  │
-   ├── WebSocket ────────────────────>│ /api/audio
-   │   (stream PCM audio)             │
-   │                                  │
-   │                                  ├──> Deepgram
-   │                                  │    (transcription)
-   │                                  │
-   │                                  ├──> Gemini
-   │                                  │    (analysis)
+Chrome Extension                WebSocket Server              Deepgram
+      │                              │                           │
+      ├── tabCapture ───────────────>│                           │
+      │   (audio stream)             │                           │
+      │                              ├── WebSocket ─────────────>│
+      │                              │   (audio)                 │
+      │                              │<──────────────────────────┤
+      │<─────────────────────────────┤   (transcription)         │
+      │   (confirmation)             │                           │
+      │                              │                           │
+      │                              │───> Web App               │
+      │                              │     (broadcast)           │
 ```
 
-### Audio Format
+## Audio Format
 
 - Sample Rate: 16000 Hz
 - Channels: 1 (mono)
 - Format: 16-bit PCM (Int16Array)
+
+## Permissions
+
+- `tabCapture` - Capture tab audio
+- `activeTab` - Access current tab
+- `storage` - Save settings
 
 ## Development
 
@@ -88,18 +96,19 @@ Extension                          Web App
 
 | File | Description |
 |------|-------------|
-| `manifest.json` | Extension configuration |
+| `manifest.json` | Extension manifest (v3) |
 | `popup/popup.html` | Extension popup UI |
 | `popup/popup.js` | Popup logic |
-| `background/service-worker.js` | Audio capture and streaming |
+| `background/service-worker.js` | Audio capture & streaming |
 | `content/content.js` | Meeting site integration |
+| `icons/` | Extension icons (SVG with 🎙️) |
 
 ### Debugging
 
 1. Open `chrome://extensions/`
 2. Find SyncVision extension
-3. Click "service worker" to open DevTools for background script
-4. Click "Inspect views: popup" to debug popup
+3. Click "service worker" → DevTools for background
+4. Click "Inspect views: popup" → DevTools for popup
 
 ## Troubleshooting
 
@@ -109,11 +118,11 @@ Extension                          Web App
 - Try refreshing the page
 
 ### WebSocket connection failed
-- Verify the web app is running
-- Check the server URL is correct
-- Look for CORS errors in console
+- Verify WebSocket server is running (`npm run dev:ws`)
+- Check the server URL in extension settings
+- Default: `http://localhost:3001`
 
-### No audio data received
-- Check that the meeting audio is not muted
-- Verify the microphone/speaker is working
-- Try adjusting the volume
+### No transcription appears
+- Check DEEPGRAM_API_KEY is set in `.env.local`
+- Look for errors in WebSocket server console
+- Verify audio is not muted in the meeting

@@ -1,6 +1,7 @@
 // Popup script for SyncVision Audio Capture
 
-const DEFAULT_SERVER_URL = "http://localhost:3000";
+const DEFAULT_WS_SERVER_URL = "http://localhost:3001";
+const DEFAULT_APP_URL = "http://localhost:3000";
 
 // DOM Elements
 const statusEl = document.getElementById("status");
@@ -18,8 +19,8 @@ let isCapturing = false;
 // Initialize
 document.addEventListener("DOMContentLoaded", async () => {
   // Load saved settings
-  const { serverUrl } = await chrome.storage.local.get(["serverUrl"]);
-  serverUrlInput.value = serverUrl || DEFAULT_SERVER_URL;
+  const { wsServerUrl } = await chrome.storage.local.get(["wsServerUrl"]);
+  serverUrlInput.value = wsServerUrl || DEFAULT_WS_SERVER_URL;
 
   // Get current capture state
   const state = await getState();
@@ -79,7 +80,7 @@ async function startCapture() {
     {
       type: "START_CAPTURE",
       tabId: tab.id,
-      serverUrl: serverUrlInput.value || DEFAULT_SERVER_URL,
+      serverUrl: serverUrlInput.value || DEFAULT_WS_SERVER_URL,
     },
     (response) => {
       if (response?.error) {
@@ -106,13 +107,12 @@ async function stopCapture() {
 }
 
 async function openApp() {
-  const serverUrl = serverUrlInput.value || DEFAULT_SERVER_URL;
-  chrome.tabs.create({ url: `${serverUrl}/realtime` });
+  chrome.tabs.create({ url: `${DEFAULT_APP_URL}/realtime` });
 }
 
 async function saveSettings() {
-  const serverUrl = serverUrlInput.value || DEFAULT_SERVER_URL;
-  await chrome.storage.local.set({ serverUrl });
+  const wsServerUrl = serverUrlInput.value || DEFAULT_WS_SERVER_URL;
+  await chrome.storage.local.set({ wsServerUrl });
 }
 
 function updateUI(state) {
