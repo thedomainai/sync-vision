@@ -3,6 +3,7 @@
 import { MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { LogEntry } from "@/types";
+import { MeetingBotPanel } from "./MeetingBotPanel";
 
 interface LeftSidebarProps {
   logs: LogEntry[];
@@ -17,6 +18,11 @@ export function LeftSidebar({
 }: LeftSidebarProps) {
   return (
     <div className="w-72 bg-slate-50 border-r flex flex-col h-full">
+      {/* Meeting Bot Panel */}
+      <div className="p-3 border-b">
+        <MeetingBotPanel />
+      </div>
+
       <div className="p-4 border-b bg-white">
         <h2 className="font-semibold flex items-center gap-2">
           <MessageSquare className="h-4 w-4" />
