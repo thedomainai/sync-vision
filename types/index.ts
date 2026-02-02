@@ -1,6 +1,9 @@
 // View modes
 export type ViewMode = "matrix" | "kanban" | "list";
 
+// Re-export frame types
+export * from "./frames";
+
 // Quadrant types for Matrix view
 export type QuadrantId = "q1" | "q2" | "q3" | "q4";
 
