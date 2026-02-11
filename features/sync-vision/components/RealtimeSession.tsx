@@ -3,7 +3,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import {
   Mic,
-  MicOff,
   Square,
   Loader2,
   LayoutGrid,
@@ -13,11 +12,11 @@ import {
   Calendar,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import type { Frame, FrameType, TranscriptSegment, OpenQuestion } from "@/types/frames";
+import type { Frame, FrameType, OpenQuestion } from "@/types/frames";
 import {
   createDeepgramWebSocket,
   sendAudioToDeepgram,
+  sendKeepAlive,
   closeDeepgramConnection,
   type DeepgramTranscriptResult,
 } from "@/lib/ai/deepgram";
@@ -64,20 +63,20 @@ export function RealtimeSession({
   const socketRef = useRef<WebSocket | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const analysisTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastAnalyzedTextRef = useRef("");
+  const turnBufferRef = useRef("");
 
   // Auto-analyze when transcript changes (debounced)
   useEffect(() => {
     if (!transcript || transcript === lastAnalyzedTextRef.current) return;
 
-    // Clear existing timeout
     if (analysisTimeoutRef.current) {
       clearTimeout(analysisTimeoutRef.current);
     }
 
-    // Set new timeout for analysis (analyze after 3 seconds of no new input)
     analysisTimeoutRef.current = setTimeout(() => {
       runAnalysis();
     }, 3000);
@@ -102,7 +101,6 @@ export function RealtimeSession({
         currentFrame
       );
 
-      // Only update if user hasn't manually selected a frame type
       if (!selectedFrameType || selectedFrameType === result.suggestedFrame) {
         setCurrentFrame(result.frame);
       }
@@ -124,88 +122,42 @@ export function RealtimeSession({
     if (!transcriptText) return;
 
     if (result.is_final) {
-      setTranscript((prev) => (prev ? `${prev} ${transcriptText}` : transcriptText));
+      turnBufferRef.current = turnBufferRef.current
+        ? `${turnBufferRef.current}${transcriptText}`
+        : transcriptText;
       setInterimTranscript("");
+
+      if (result.speech_final) {
+        const turnText = turnBufferRef.current;
+        turnBufferRef.current = "";
+        setTranscript((prev) => (prev ? `${prev}\n${turnText}` : turnText));
+      }
     } else {
-      setInterimTranscript(transcriptText);
+      const display = turnBufferRef.current
+        ? `${turnBufferRef.current}${transcriptText}`
+        : transcriptText;
+      setInterimTranscript(display);
     }
   }, []);
 
-  const startRecording = useCallback(async () => {
-    if (!deepgramApiKey) {
-      setError("Deepgram API key is not configured");
-      return;
+  const handleUtteranceEnd = useCallback(() => {
+    if (turnBufferRef.current) {
+      const turnText = turnBufferRef.current;
+      turnBufferRef.current = "";
+      setTranscript((prev) => (prev ? `${prev}\n${turnText}` : turnText));
+      setInterimTranscript("");
     }
+  }, []);
 
-    setError(null);
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      });
-
-      mediaStreamRef.current = stream;
-
-      const socket = createDeepgramWebSocket(
-        { apiKey: deepgramApiKey, language: "ja" },
-        handleTranscript,
-        (err) => {
-          setError(err.message);
-          stopRecording();
-        },
-        () => setStatus("idle")
-      );
-
-      socketRef.current = socket;
-
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("Connection timeout")), 5000);
-        socket.onopen = () => {
-          clearTimeout(timeout);
-          resolve();
-        };
-        socket.onerror = () => {
-          clearTimeout(timeout);
-          reject(new Error("Connection failed"));
-        };
-      });
-
-      const audioContext = new AudioContext({ sampleRate: 16000 });
-      audioContextRef.current = audioContext;
-
-      const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-
-      processor.onaudioprocess = (e) => {
-        if (socketRef.current?.readyState !== WebSocket.OPEN) return;
-        const inputData = e.inputBuffer.getChannelData(0);
-        const pcm16 = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) {
-          const s = Math.max(-1, Math.min(1, inputData[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-        sendAudioToDeepgram(socketRef.current, pcm16.buffer);
-      };
-
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-      setStatus("recording");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start recording");
-      stopRecording();
+  const cleanup = useCallback(() => {
+    if (keepAliveRef.current) {
+      clearInterval(keepAliveRef.current);
+      keepAliveRef.current = null;
     }
-  }, [deepgramApiKey, handleTranscript]);
-
-  const stopRecording = useCallback(() => {
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
+    if (workletNodeRef.current) {
+      workletNodeRef.current.disconnect();
+      workletNodeRef.current.port.close();
+      workletNodeRef.current = null;
     }
     if (audioContextRef.current) {
       audioContextRef.current.close();
@@ -219,14 +171,91 @@ export function RealtimeSession({
       closeDeepgramConnection(socketRef.current);
       socketRef.current = null;
     }
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    if (!deepgramApiKey) {
+      setError("Deepgram API key is not configured");
+      return;
+    }
+
+    setError(null);
+    turnBufferRef.current = "";
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      mediaStreamRef.current = stream;
+
+      const socket = createDeepgramWebSocket(
+        { apiKey: deepgramApiKey, language: "ja" },
+        handleTranscript,
+        (err) => {
+          setError(err.message);
+          stopRecording();
+        },
+        () => setStatus("idle"),
+        { onUtteranceEnd: handleUtteranceEnd }
+      );
+      socketRef.current = socket;
+
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Connection timeout")), 5000);
+        socket.addEventListener("open", () => { clearTimeout(timeout); resolve(); }, { once: true });
+        socket.addEventListener("error", () => { clearTimeout(timeout); reject(new Error("Connection failed")); }, { once: true });
+      });
+
+      // AudioWorklet pipeline
+      const audioContext = new AudioContext({ sampleRate: 16000 });
+      audioContextRef.current = audioContext;
+
+      await audioContext.audioWorklet.addModule("/audio-worklet-processor.js");
+
+      const source = audioContext.createMediaStreamSource(stream);
+      const workletNode = new AudioWorkletNode(audioContext, "audio-capture-processor");
+      workletNodeRef.current = workletNode;
+
+      workletNode.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+          sendAudioToDeepgram(socketRef.current, event.data);
+        }
+      };
+
+      source.connect(workletNode);
+
+      // Keep-alive to prevent Deepgram timeout during silence
+      keepAliveRef.current = setInterval(() => {
+        if (socketRef.current) sendKeepAlive(socketRef.current);
+      }, 8000);
+
+      setStatus("recording");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start recording");
+      cleanup();
+    }
+  }, [deepgramApiKey, handleTranscript, handleUtteranceEnd, cleanup]);
+
+  const stopRecording = useCallback(() => {
+    if (turnBufferRef.current) {
+      const turnText = turnBufferRef.current;
+      turnBufferRef.current = "";
+      setTranscript((prev) => (prev ? `${prev}\n${turnText}` : turnText));
+    }
+    cleanup();
     setStatus("idle");
     setInterimTranscript("");
-  }, []);
+  }, [cleanup]);
 
   const handleFrameTypeChange = (type: FrameType) => {
     setSelectedFrameType(type);
     setCurrentFrame(createEmptyFrame(type));
-    // Re-run analysis with new frame type
     if (transcript) {
       runAnalysis();
     }
@@ -241,6 +270,7 @@ export function RealtimeSession({
     setFrameReason("");
     setOpenQuestions([]);
     lastAnalyzedTextRef.current = "";
+    turnBufferRef.current = "";
   };
 
   const handleToggleQuestionResolved = (questionId: string) => {
@@ -257,7 +287,6 @@ export function RealtimeSession({
     <div className="h-full flex flex-col">
       {/* Header controls */}
       <div className="flex items-center gap-2 p-4 border-b bg-white">
-        {/* Recording button */}
         <Button
           onClick={status === "idle" ? startRecording : stopRecording}
           variant={status === "recording" ? "destructive" : "default"}
@@ -288,7 +317,6 @@ export function RealtimeSession({
 
         <div className="flex-1" />
 
-        {/* Frame type tabs */}
         {FRAME_TABS.map((tab) => (
           <Button
             key={tab.id}
@@ -302,7 +330,6 @@ export function RealtimeSession({
           </Button>
         ))}
 
-        {/* Analysis indicator */}
         {isAnalyzing && (
           <span className="flex items-center gap-1 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -310,7 +337,6 @@ export function RealtimeSession({
           </span>
         )}
 
-        {/* Clear button */}
         {transcript && (
           <Button variant="outline" size="sm" onClick={clearSession} className="gap-2">
             <RefreshCw className="h-4 w-4" />
@@ -319,16 +345,13 @@ export function RealtimeSession({
         )}
       </div>
 
-      {/* Error display */}
       {error && (
         <div className="mx-4 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
           {error}
         </div>
       )}
 
-      {/* Main content area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Frame visualization */}
         <div className="flex-1 overflow-auto bg-gray-50">
           {displayFrameType === "matrix" && (
             <MatrixFrame frame={currentFrame as any} />
@@ -344,7 +367,6 @@ export function RealtimeSession({
           )}
         </div>
 
-        {/* Right: Transcript panel */}
         <div className="w-80 border-l bg-white flex flex-col">
           <div className="p-3 border-b">
             <h3 className="font-medium text-sm">文字起こし</h3>
@@ -379,7 +401,6 @@ export function RealtimeSession({
             </div>
           )}
 
-          {/* Open Questions Panel */}
           <OpenQuestionsPanel
             questions={openQuestions}
             onToggleResolved={handleToggleQuestionResolved}

@@ -4,8 +4,10 @@ import { useState, useRef, useCallback } from "react";
 import {
   createDeepgramWebSocket,
   sendAudioToDeepgram,
+  sendKeepAlive,
   closeDeepgramConnection,
   type DeepgramTranscriptResult,
+  type DeepgramUtteranceEnd,
 } from "@/lib/ai/deepgram";
 
 export type RecordingStatus = "idle" | "recording" | "paused";
@@ -14,7 +16,9 @@ export interface TranscriptionSegment {
   id: string;
   text: string;
   isFinal: boolean;
+  speechFinal: boolean;
   timestamp: number;
+  confidence: number;
 }
 
 export interface UseRealtimeTranscriptionOptions {
@@ -38,7 +42,8 @@ export interface UseRealtimeTranscriptionReturn {
 export function useRealtimeTranscription(
   options: UseRealtimeTranscriptionOptions = {}
 ): UseRealtimeTranscriptionReturn {
-  const { apiKey = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY, language = "ja" } = options;
+  const { apiKey = process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY, language = "ja" } =
+    options;
 
   const [status, setStatus] = useState<RecordingStatus>("idle");
   const [transcript, setTranscript] = useState("");
@@ -49,119 +54,93 @@ export function useRealtimeTranscription(
   const socketRef = useRef<WebSocket | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const segmentIdRef = useRef(0);
 
-  const handleTranscript = useCallback((result: DeepgramTranscriptResult) => {
-    const transcriptText = result.channel.alternatives[0]?.transcript || "";
+  // Buffer for accumulating interim results within a speech turn
+  const turnBufferRef = useRef("");
 
-    if (!transcriptText) return;
+  const handleTranscript = useCallback(
+    (result: DeepgramTranscriptResult) => {
+      const transcriptText =
+        result.channel.alternatives[0]?.transcript || "";
 
-    if (result.is_final) {
-      setTranscript((prev) => {
-        const newText = prev ? `${prev} ${transcriptText}` : transcriptText;
-        return newText;
-      });
+      if (!transcriptText) return;
+
+      const confidence = result.channel.alternatives[0]?.confidence ?? 0;
+
+      if (result.is_final) {
+        // Accumulate final chunks within the current speech turn
+        turnBufferRef.current = turnBufferRef.current
+          ? `${turnBufferRef.current}${transcriptText}`
+          : transcriptText;
+        setInterimTranscript("");
+
+        if (result.speech_final) {
+          // speech_final = true: end of a natural speech turn
+          // Flush the turn buffer as a complete segment
+          const turnText = turnBufferRef.current;
+          turnBufferRef.current = "";
+
+          setTranscript((prev) =>
+            prev ? `${prev}\n${turnText}` : turnText
+          );
+
+          const newSegment: TranscriptionSegment = {
+            id: `seg-${segmentIdRef.current++}`,
+            text: turnText,
+            isFinal: true,
+            speechFinal: true,
+            timestamp: Date.now(),
+            confidence,
+          };
+          setSegments((prev) => [...prev, newSegment]);
+        }
+      } else {
+        // Show interim: turn buffer so far + current interim
+        const display = turnBufferRef.current
+          ? `${turnBufferRef.current}${transcriptText}`
+          : transcriptText;
+        setInterimTranscript(display);
+      }
+    },
+    []
+  );
+
+  const handleUtteranceEnd = useCallback(() => {
+    // Utterance end: flush any remaining turn buffer
+    if (turnBufferRef.current) {
+      const turnText = turnBufferRef.current;
+      turnBufferRef.current = "";
+
+      setTranscript((prev) =>
+        prev ? `${prev}\n${turnText}` : turnText
+      );
       setInterimTranscript("");
 
       const newSegment: TranscriptionSegment = {
         id: `seg-${segmentIdRef.current++}`,
-        text: transcriptText,
+        text: turnText,
         isFinal: true,
+        speechFinal: true,
         timestamp: Date.now(),
+        confidence: 0,
       };
       setSegments((prev) => [...prev, newSegment]);
-    } else {
-      setInterimTranscript(transcriptText);
     }
   }, []);
 
-  const startRecording = useCallback(async () => {
-    if (!apiKey) {
-      setError("Deepgram API key is not configured");
-      return;
+  const cleanup = useCallback(() => {
+    if (keepAliveRef.current) {
+      clearInterval(keepAliveRef.current);
+      keepAliveRef.current = null;
     }
 
-    setError(null);
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
-      });
-
-      mediaStreamRef.current = stream;
-
-      const socket = createDeepgramWebSocket(
-        { apiKey, language },
-        handleTranscript,
-        (err) => {
-          setError(err.message);
-          stopRecording();
-        },
-        () => {
-          setStatus("idle");
-        }
-      );
-
-      socketRef.current = socket;
-
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error("WebSocket connection timeout"));
-        }, 5000);
-
-        socket.onopen = () => {
-          clearTimeout(timeout);
-          resolve();
-        };
-
-        socket.onerror = () => {
-          clearTimeout(timeout);
-          reject(new Error("WebSocket connection failed"));
-        };
-      });
-
-      const audioContext = new AudioContext({ sampleRate: 16000 });
-      audioContextRef.current = audioContext;
-
-      const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-
-      processor.onaudioprocess = (e) => {
-        if (socketRef.current?.readyState !== WebSocket.OPEN) return;
-
-        const inputData = e.inputBuffer.getChannelData(0);
-        const pcm16 = new Int16Array(inputData.length);
-
-        for (let i = 0; i < inputData.length; i++) {
-          const s = Math.max(-1, Math.min(1, inputData[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-
-        sendAudioToDeepgram(socketRef.current, pcm16.buffer);
-      };
-
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-
-      setStatus("recording");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to start recording";
-      setError(message);
-      stopRecording();
-    }
-  }, [apiKey, language, handleTranscript]);
-
-  const stopRecording = useCallback(() => {
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
+    if (workletNodeRef.current) {
+      workletNodeRef.current.disconnect();
+      workletNodeRef.current.port.close();
+      workletNodeRef.current = null;
     }
 
     if (audioContextRef.current) {
@@ -178,28 +157,146 @@ export function useRealtimeTranscription(
       closeDeepgramConnection(socketRef.current);
       socketRef.current = null;
     }
+  }, []);
 
+  const startRecording = useCallback(async () => {
+    if (!apiKey) {
+      setError("Deepgram API key is not configured");
+      return;
+    }
+
+    setError(null);
+    turnBufferRef.current = "";
+
+    try {
+      // 1. Get microphone stream
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      mediaStreamRef.current = stream;
+
+      // 2. Connect to Deepgram
+      const socket = createDeepgramWebSocket(
+        { apiKey, language },
+        handleTranscript,
+        (err) => {
+          setError(err.message);
+          stopRecording();
+        },
+        () => setStatus("idle"),
+        {
+          onUtteranceEnd: handleUtteranceEnd,
+        }
+      );
+      socketRef.current = socket;
+
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error("Connection timeout")),
+          5000
+        );
+        socket.addEventListener(
+          "open",
+          () => {
+            clearTimeout(timeout);
+            resolve();
+          },
+          { once: true }
+        );
+        socket.addEventListener(
+          "error",
+          () => {
+            clearTimeout(timeout);
+            reject(new Error("Connection failed"));
+          },
+          { once: true }
+        );
+      });
+
+      // 3. Set up AudioWorklet pipeline
+      const audioContext = new AudioContext({ sampleRate: 16000 });
+      audioContextRef.current = audioContext;
+
+      await audioContext.audioWorklet.addModule("/audio-worklet-processor.js");
+
+      const source = audioContext.createMediaStreamSource(stream);
+      const workletNode = new AudioWorkletNode(
+        audioContext,
+        "audio-capture-processor"
+      );
+      workletNodeRef.current = workletNode;
+
+      // Receive PCM16 chunks from worklet thread and send to Deepgram
+      workletNode.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+          sendAudioToDeepgram(socketRef.current, event.data);
+        }
+      };
+
+      source.connect(workletNode);
+      // AudioWorklet doesn't need to connect to destination for capture-only
+
+      // 4. Keep-alive to prevent Deepgram timeout during silence
+      keepAliveRef.current = setInterval(() => {
+        if (socketRef.current) {
+          sendKeepAlive(socketRef.current);
+        }
+      }, 8000);
+
+      setStatus("recording");
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to start recording";
+      setError(message);
+      cleanup();
+    }
+  }, [apiKey, language, handleTranscript, handleUtteranceEnd, cleanup]);
+
+  const stopRecording = useCallback(() => {
+    // Flush any remaining turn buffer
+    if (turnBufferRef.current) {
+      const turnText = turnBufferRef.current;
+      turnBufferRef.current = "";
+      setTranscript((prev) =>
+        prev ? `${prev}\n${turnText}` : turnText
+      );
+      setInterimTranscript("");
+    }
+
+    cleanup();
     setStatus("idle");
     setInterimTranscript("");
-  }, []);
+  }, [cleanup]);
 
   const pauseRecording = useCallback(() => {
     if (status !== "recording") return;
 
-    if (processorRef.current) {
-      processorRef.current.disconnect();
+    if (workletNodeRef.current) {
+      workletNodeRef.current.disconnect();
     }
 
     setStatus("paused");
   }, [status]);
 
   const resumeRecording = useCallback(() => {
-    if (status !== "paused" || !audioContextRef.current || !processorRef.current) return;
+    if (
+      status !== "paused" ||
+      !audioContextRef.current ||
+      !workletNodeRef.current
+    )
+      return;
 
     if (mediaStreamRef.current) {
-      const source = audioContextRef.current.createMediaStreamSource(mediaStreamRef.current);
-      source.connect(processorRef.current);
-      processorRef.current.connect(audioContextRef.current.destination);
+      const source = audioContextRef.current.createMediaStreamSource(
+        mediaStreamRef.current
+      );
+      source.connect(workletNodeRef.current);
     }
 
     setStatus("recording");
@@ -210,6 +307,7 @@ export function useRealtimeTranscription(
     setInterimTranscript("");
     setSegments([]);
     segmentIdRef.current = 0;
+    turnBufferRef.current = "";
   }, []);
 
   return {

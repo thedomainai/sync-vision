@@ -6,6 +6,7 @@ export interface DeepgramTranscriptWord {
   end: number;
   confidence: number;
   punctuated_word?: string;
+  speaker?: number;
 }
 
 export interface DeepgramTranscriptAlternative {
@@ -28,6 +29,12 @@ export interface DeepgramTranscriptResult {
   channel: DeepgramTranscriptChannel;
 }
 
+export interface DeepgramUtteranceEnd {
+  type: "UtteranceEnd";
+  last_word_end: number;
+  channel: number[];
+}
+
 export interface DeepgramMetadata {
   type: "Metadata";
   transaction_key: string;
@@ -39,7 +46,10 @@ export interface DeepgramMetadata {
   models: string[];
 }
 
-export type DeepgramMessage = DeepgramTranscriptResult | DeepgramMetadata;
+export type DeepgramMessage =
+  | DeepgramTranscriptResult
+  | DeepgramUtteranceEnd
+  | DeepgramMetadata;
 
 export interface DeepgramConfig {
   apiKey: string;
@@ -50,6 +60,12 @@ export interface DeepgramConfig {
   interimResults?: boolean;
   utteranceEndMs?: number;
   vadEvents?: boolean;
+  encoding?: string;
+  sampleRate?: number;
+  channels?: number;
+  endpointing?: number | false;
+  fillerWords?: boolean;
+  numerals?: boolean;
 }
 
 const DEFAULT_CONFIG: Partial<DeepgramConfig> = {
@@ -58,15 +74,33 @@ const DEFAULT_CONFIG: Partial<DeepgramConfig> = {
   punctuate: true,
   smartFormat: true,
   interimResults: true,
-  utteranceEndMs: 1000,
+  utteranceEndMs: 500,
   vadEvents: true,
+  encoding: "linear16",
+  sampleRate: 16000,
+  channels: 1,
+  endpointing: 500,
+  fillerWords: true,
+  numerals: true,
 };
+
+export interface DeepgramCallbacks {
+  onTranscript: (result: DeepgramTranscriptResult) => void;
+  onUtteranceEnd?: (result: DeepgramUtteranceEnd) => void;
+  onError: (error: Error) => void;
+  onClose: () => void;
+  onOpen?: () => void;
+}
 
 export function createDeepgramWebSocket(
   config: DeepgramConfig,
   onTranscript: (result: DeepgramTranscriptResult) => void,
   onError: (error: Error) => void,
-  onClose: () => void
+  onClose: () => void,
+  options?: {
+    onUtteranceEnd?: (result: DeepgramUtteranceEnd) => void;
+    onOpen?: () => void;
+  }
 ): WebSocket {
   const mergedConfig = { ...DEFAULT_CONFIG, ...config };
 
@@ -78,7 +112,21 @@ export function createDeepgramWebSocket(
     interim_results: String(mergedConfig.interimResults),
     utterance_end_ms: String(mergedConfig.utteranceEndMs),
     vad_events: String(mergedConfig.vadEvents),
+    encoding: mergedConfig.encoding!,
+    sample_rate: String(mergedConfig.sampleRate),
+    channels: String(mergedConfig.channels),
+    filler_words: String(mergedConfig.fillerWords),
+    numerals: String(mergedConfig.numerals),
   });
+
+  if (mergedConfig.endpointing !== undefined) {
+    params.set(
+      "endpointing",
+      mergedConfig.endpointing === false
+        ? "false"
+        : String(mergedConfig.endpointing)
+    );
+  }
 
   const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
 
@@ -86,6 +134,7 @@ export function createDeepgramWebSocket(
 
   socket.onopen = () => {
     console.log("[Deepgram] WebSocket connected");
+    options?.onOpen?.();
   };
 
   socket.onmessage = (event) => {
@@ -94,6 +143,8 @@ export function createDeepgramWebSocket(
 
       if (data.type === "Results") {
         onTranscript(data);
+      } else if (data.type === "UtteranceEnd") {
+        options?.onUtteranceEnd?.(data);
       }
     } catch (error) {
       console.error("[Deepgram] Failed to parse message:", error);
@@ -113,14 +164,34 @@ export function createDeepgramWebSocket(
   return socket;
 }
 
-export function sendAudioToDeepgram(socket: WebSocket, audioData: ArrayBuffer): void {
+/**
+ * Send a keep-alive message to prevent Deepgram from closing idle connections.
+ * Deepgram closes connections after ~10s of no audio.
+ */
+export function sendKeepAlive(socket: WebSocket): void {
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "KeepAlive" }));
+  }
+}
+
+export function sendAudioToDeepgram(
+  socket: WebSocket,
+  audioData: ArrayBuffer
+): void {
   if (socket.readyState === WebSocket.OPEN) {
     socket.send(audioData);
   }
 }
 
 export function closeDeepgramConnection(socket: WebSocket): void {
-  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+  if (
+    socket.readyState === WebSocket.OPEN ||
+    socket.readyState === WebSocket.CONNECTING
+  ) {
+    // Send CloseStream for graceful shutdown (Deepgram will flush remaining audio)
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "CloseStream" }));
+    }
     socket.close();
   }
 }
